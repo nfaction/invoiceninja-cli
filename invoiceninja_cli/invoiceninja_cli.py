@@ -32,6 +32,27 @@ from .core.purchase_orders import PurchaseOrderResource
 # Helpers
 # ---------------------------------------------------------------------------
 
+def _is_local_network_error(exc: Exception) -> bool:
+    return "No route to host" in str(exc) or "Errno 65" in str(exc)
+
+
+def _trigger_local_network_permission() -> bool:
+    """Send an mDNS multicast probe to trigger the macOS Local Network permission dialog.
+
+    Returns True if the probe was sent without an immediate socket error (not a guarantee
+    the dialog appeared — macOS may silently suppress it if already denied).
+    """
+    import socket
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+        sock.settimeout(0.5)
+        sock.sendto(b"\x00" * 12, ("224.0.0.251", 5353))
+        sock.close()
+        return True
+    except Exception:
+        return False
+
+
 def _make_session() -> InvoiceNinjaSession:
     """Build an authenticated session from stored/env config."""
     try:
@@ -54,8 +75,18 @@ def _handle_api(func, *args, json_mode: bool = False, entity: str = "",
     except InvoiceNinjaAPIError as exc:
         print_error(str(exc))
         sys.exit(1)
-    except Exception as exc:  # network errors, etc.
-        print_error(f"Unexpected error: {exc}")
+    except Exception as exc:
+        import platform
+        if _is_local_network_error(exc) and platform.system() == "Darwin":
+            _trigger_local_network_permission()
+            click.echo(
+                "macOS is blocking Python's access to your local network.\n"
+                "Reset the permission so macOS will prompt you to allow it:\n\n"
+                "  tccutil reset LocalNetwork\n\n"
+                "Then run this command again and approve the dialog."
+            )
+            sys.exit(1)
+        print_error(f"Connection failed: {exc}")
         sys.exit(1)
 
 
@@ -139,6 +170,24 @@ def ping(json_mode: bool):
         print_error(str(exc))
         sys.exit(1)
     except Exception as exc:
+        import platform
+        if _is_local_network_error(exc) and platform.system() == "Darwin":
+            _trigger_local_network_permission()
+            click.echo(
+                "macOS needs Local Network permission for Python.\n"
+                "A permission dialog should have appeared — approve it, then press Enter to retry."
+            )
+            click.pause("")
+            try:
+                result = session.ping()
+                if json_mode:
+                    format_output(result, json_mode=True)
+                else:
+                    click.echo("Connection successful.")
+                return
+            except Exception as retry_exc:
+                print_error(f"Connection failed after permission grant: {retry_exc}")
+                sys.exit(1)
         print_error(f"Connection failed: {exc}")
         sys.exit(1)
 

@@ -57,6 +57,12 @@ Dependencies installed automatically:
 
 ## Installation
 
+**From GitHub (recommended):**
+```bash
+pip install git+https://github.com/nfaction/invoiceninja-cli.git
+```
+
+**From a local clone:**
 ```bash
 cd ~/dev/invoiceninja-cli
 pip install -e .
